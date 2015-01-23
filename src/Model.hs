@@ -6,6 +6,7 @@ import Data.Functor
 import Control.Monad
 -- import Data.Monoid
 import Data.Foldable
+import Data.Maybe (isJust, mapMaybe)
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map hiding (size)
 import Data.Map.Strict (Map, (!))
@@ -72,17 +73,17 @@ furniturePoints (normalize -> (NormFurniture (Point row col) width height)) =
                  join $ tabulateList2 width height (\drow dcol -> Point (row + fromIntegral drow) (col + fromIntegral dcol))
 
 
-addFurnitureGrid :: Furniture -> (Grid -> Maybe Grid)
-addFurnitureGrid furniture = applyAll setPoint (furniturePoints furniture)
+fillFurniture :: Furniture -> (Grid -> Maybe Grid)
+fillFurniture furniture = applyAll setPoint (furniturePoints furniture)
 
 constructFloor :: Foldable f => f Furniture -> Grid -> Maybe Grid
-constructFloor = applyAll addFurnitureGrid
+constructFloor = applyAll fillFurniture
 
 stateGrid :: State -> Maybe Grid
 stateGrid (State floor fs) = constructFloor (Map.elems fs) floor
 
--- addFurniture :: Furniture -> State -> Maybe State
--- addFurniture furniture (State grid set) = Set.insert furniture set
+addFurniture :: Furniture -> Nat -> State -> Maybe State
+addFurniture furniture id' (State grid fs) = validate isValidState $ State grid (Map.insert id' furniture fs)
 
 --- Transforms ---
 
@@ -104,9 +105,32 @@ moveRight = translate 0    1
 transforms :: [Furniture -> Furniture]
 transforms = [moveUp, moveDown, moveLeft, moveRight, rotateClockwise, rotateCounterClockwise]
 
-allTransforms :: Furniture -> [Furniture]
-allTransforms furniture = ($ furniture) <$> transforms
---                         ^ apply with furniture for each element in transforms.
+singleTransforms :: Furniture -> [Furniture]
+singleTransforms furniture = ($ furniture) <$> transforms
+--                            ^ apply with furniture for each element in transforms.
+
+tryTransform :: (Furniture -> Furniture) -> Nat -> State -> Maybe State
+tryTransform f id' state@(State _ fs) =
+         do
+           furniture <- Map.lookup id' fs
+           addFurniture (f furniture) id' state
+
+tryTransforms :: Nat -> State -> [State]
+tryTransforms id' state = mapMaybe (\f -> tryTransform f id' state) transforms
+
+allTransforms :: State -> [State]
+allTransforms state@(State _ fs) =
+         do
+           id' <- Map.keys fs
+           tryTransforms id' state
+
+isValidState :: State -> Bool
+isValidState = isJust . stateGrid
+
+validate :: (a -> Bool) -> a -> Maybe a
+validate p a = if p a
+               then Just a
+               else Nothing
 
 --- ## Everything else ## ---
 
