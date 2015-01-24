@@ -1,20 +1,22 @@
 {-# LANGUAGE ViewPatterns #-}
 module Model where
 
-import Prelude hiding (lookup, floor, abs)
+import Prelude hiding (lookup, floor, abs, length)
 import Data.Functor
 import Control.Monad
--- import Data.Monoid
+import Data.Monoid
 import Data.Foldable
 import Data.Maybe (isJust, mapMaybe)
+import Data.Function (on)
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map hiding (size)
 import Data.Map.Strict (Map, (!))
 -- import Data.Set (Set)
--- import qualified Data.Set as Set
+import qualified Data.Set as Set
 import Numeric.Natural
 import Control.Arrow (Kleisli(..))
 import Data.Monoid.Endomorphism
+import Data.Graph.AStar
 
 --- ## Model ## ---
 
@@ -22,11 +24,28 @@ type Nat = Natural
 
 data Point = Point {_row :: Int, _col :: Int} deriving (Show, Eq, Ord)
 
+data Block = Floor | Wall | FurnitureBlock deriving (Show, Eq, Ord)
+data Move = MoveUp | MoveDown | MoveLeft | MoveRight | RotateClockwise | RotateCounterClockwise deriving (Show, Eq, Ord)
+
 --                                 pos   width  height
 data Furniture     = Furniture     Point Int    Int    deriving (Eq, Ord)
 data NormFurniture = NormFurniture Point Nat    Nat    deriving (Show, Eq, Ord)
 
-data Grid = Grid (Nat, Nat) (Map Point Bool) deriving (Eq, Ord)
+data Grid = Grid (Map Point Block) deriving (Eq, Ord)
+
+--                 Floor     Furniture
+--                 Structure      id
+data State = State Grid      (Map Nat Furniture) (Maybe Move) deriving (Eq, Ord)
+
+--- Model typeclass instances ---
+
+instance Monoid Point where
+    mappend (Point x y) (Point x' y') = Point (x + x') (y + y')
+    mempty = Point 0 0
+
+instance Monoid Grid where
+    mappend = combineFloors
+    mempty = Grid Map.empty
 
 instance Show Furniture where
   show (Furniture (Point row col) width height) =
@@ -35,9 +54,8 @@ instance Show Furniture where
 instance Show Grid where
   show = showGrid
 
---                 Floor     Furniture
---                 Structure      id
-data State = State Grid      (Map Nat Furniture)
+instance Show State where
+  show state@(State _ _ move) = "Move: " ++ show move ++ "\n" ++ show (stateGrid state)
 
 --- Grid to matrix ---
 
@@ -45,18 +63,25 @@ tabulateList2 :: Nat -> Nat -> (Nat -> Nat -> a) -> [[a]]
 tabulateList2 width height f = (\row -> (\col -> f row col) <$> [0..(width - 1)]) <$> [0..(height - 1)]
 
 -- Assumes that for each index in (width, height), a value is set.
-gridList :: Grid -> [[Bool]]
-gridList (Grid (width, height) mat) = tabulateList2 width height (\row col -> mat ! Point (fromIntegral row) (fromIntegral col))
+gridList :: Grid -> [[Maybe Block]]
+gridList (Grid grid) = tabulateList2 width height (\row col -> Map.lookup (Point (fromIntegral row) (fromIntegral col)) grid)
+                      where width, height :: Nat
+                            width  = fromIntegral maxCol + 1  -- (+ 1) because the indexes start from 0.
+                            height = fromIntegral maxRow + 1
+                            Point _ maxCol  = maximumBy (compare `on` _col) positions
+                            Point maxRow _  = maximumBy (compare `on` _row) positions
+                            positions = Map.keys grid
 
 --- Addition, construction ---
 
 -- Lens possibility
 setPoint :: Point -> (Grid -> Maybe Grid)
-setPoint p (Grid dim grid) =
+setPoint p (Grid grid) =
             case Map.lookup p grid of
               Nothing -> Nothing
-              Just True -> Nothing
-              Just False -> Just $ Grid dim (Map.insert p True grid)
+              Just Wall -> Nothing
+              Just FurnitureBlock -> Nothing
+              Just Floor -> Just $ Grid (Map.insert p FurnitureBlock grid)
 
 -- Moves the origin to the upper left, width and height are non-negative (Nats).
 normalize :: Furniture -> NormFurniture
@@ -80,10 +105,10 @@ constructFloor :: Foldable f => f Furniture -> Grid -> Maybe Grid
 constructFloor = applyAll fillFurniture
 
 stateGrid :: State -> Maybe Grid
-stateGrid (State floor fs) = constructFloor (Map.elems fs) floor
+stateGrid (State floor fs _) = constructFloor (Map.elems fs) floor
 
 addFurniture :: Furniture -> Nat -> State -> Maybe State
-addFurniture furniture id' (State grid fs) = validate isValidState $ State grid (Map.insert id' furniture fs)
+addFurniture furniture id' (State grid fs move) = validate isValidState $ State grid (Map.insert id' furniture fs) move
 
 --- Transforms ---
 
@@ -102,24 +127,21 @@ moveDown  = translate 1    0
 moveLeft  = translate 0    (-1)
 moveRight = translate 0    1
 
-transforms :: [Furniture -> Furniture]
-transforms = [moveUp, moveDown, moveLeft, moveRight, rotateClockwise, rotateCounterClockwise]
+transforms :: [(Furniture -> Furniture, Move)]
+transforms = [(moveUp, MoveUp), (moveDown, MoveDown), (moveLeft, MoveLeft), (moveRight, MoveRight), (rotateClockwise, RotateClockwise), (rotateCounterClockwise, RotateCounterClockwise)]
 
-singleTransforms :: Furniture -> [Furniture]
-singleTransforms furniture = ($ furniture) <$> transforms
---                            ^ apply with furniture for each element in transforms.
-
-tryTransform :: (Furniture -> Furniture) -> Nat -> State -> Maybe State
-tryTransform f id' state@(State _ fs) =
+tryTransform :: (Furniture -> Furniture, Move) -> Nat -> State -> Maybe State
+tryTransform (f,move) id' state@(State _ fs _) =
          do
            furniture <- Map.lookup id' fs
-           addFurniture (f furniture) id' state
+           (State grid fs' _) <- addFurniture (f furniture) id' state
+           return $ State grid fs' (Just move)
 
 tryTransforms :: Nat -> State -> [State]
 tryTransforms id' state = mapMaybe (\f -> tryTransform f id' state) transforms
 
 allTransforms :: State -> [State]
-allTransforms state@(State _ fs) =
+allTransforms state@(State _ fs _) =
          do
            id' <- Map.keys fs
            tryTransforms id' state
@@ -132,8 +154,31 @@ validate p a = if p a
                then Just a
                else Nothing
 
+--- ## AI ## ---
+
+bestPath :: State -> State -> Maybe [State]
+bestPath goal = aStar (Set.fromList . allTransforms) (const . const 1) (heuristic goal) (isGoal goal)
+
+heuristic :: State -> State -> Double
+heuristic (State _ goalFurniture _) (State _ currentFurniture _) = getSum $ foldMap Sum $ mergeWith furnitureDistance currentFurniture goalFurniture
+                                                                                      -- merge by key with distance.
+
+isGoal :: State -> State -> Bool
+isGoal (State _ goalFurniture _) (State _ currentFurniture _) = getAll $ foldMap All $ mergeWith equalFurniture currentFurniture goalFurniture
+
+furnitureDistance :: Furniture -> Furniture -> Double
+furnitureDistance (normalize -> (NormFurniture p1 _ _)) (normalize -> (NormFurniture p2 _ _)) = distance p1 p2
+
+equalFurniture :: Furniture -> Furniture -> Bool
+equalFurniture (normalize -> (NormFurniture p1 w1 h1)) (normalize -> (NormFurniture p2 w2 h2)) = p1 == p2 && w1 == w2 && h1 == h2
+
 --- ## Everything else ## ---
 
+--- Set manipulation ---
+
+-- Requires that all the keys are equal for both maps.
+mergeWith :: Ord k => (a -> b -> c) -> Map k a -> Map k b -> Map k c
+mergeWith f t1 t2 = Map.mergeWithKey (\_ x1 x2 -> Just $ f x1 x2) (const Map.empty) (const Map.empty) t1 t2
 
 --- Numeric ---
 
@@ -148,6 +193,9 @@ abs n | n < 0     = fromIntegral (-n)
 normNegative :: Int -> Int -> (Int, Nat)
 normNegative origin w | w < 0     = (origin + w, abs w)
                       | otherwise = (origin    , abs w)
+
+distance :: Point -> Point -> Double
+distance (Point x y) (Point x' y') = sqrt $ (fromIntegral x - fromIntegral x')^(2 :: Int) + (fromIntegral y - fromIntegral y')^(2 :: Int)
 
 --- Kleisli monoid fun ---
 
@@ -170,26 +218,73 @@ showMat :: (a -> String) -> String -> [[a]] -> String
 showMat f sep grid = unlines (mkString f sep <$> grid)
 
 showGrid :: Grid -> String
-showGrid grid = '\n' : showMat (\b -> if b then "X" else "O") "" mat
+showGrid grid = '\n' : showMat showBlock "" mat
                 where mat = gridList grid
+                      showBlock Nothing               = " "
+                      showBlock (Just Floor)          = "-"
+                      showBlock (Just Wall)           = "█"
+                      showBlock (Just FurnitureBlock) = "X"
+
 
 --- Ghci Testing ---
 
 emptyGrid :: Nat -> Nat -> Grid
-emptyGrid width height = Grid (width,height) (Map.fromList $ rectangle width height)
+emptyGrid width height = Grid (Map.fromList $ rectangle width height (Point 0 0) (const Floor))
+
+initialGrid :: Grid
+initialGrid = room $ Room 5 5 (Point 0 0)
 
 initial :: State
-initial = State (emptyGrid 5 5) Map.empty
+initial = State initialGrid (Map.fromList [(1,Furniture (Point 4 1) 2 2),(2, Furniture (Point 4 4) 2 2)]) Nothing
 
-rectangle :: Nat -> Nat -> [(Point, Bool)]
-rectangle width height = do
-                         row <- [0..height - 1]
-                         col <- [0..width - 1]
-                         return (Point (fromIntegral row) (fromIntegral col), False)
-                         --             Nat -> Int         Nat -> Int
+goalState :: State
+goalState = State initialGrid (Map.fromList [(1,Furniture (Point 1 4) 2 2),(2, Furniture (Point 1 1) 2 2)]) Nothing
 
-printState :: State -> IO ()
-printState = print . stateGrid
+rectangle :: Nat -> Nat -> Point -> (Point -> Block) -> [(Point, Block)]
+rectangle width height origin f =
+    do
+      row <- [0..height - 1]
+      col <- [0..width - 1]
+      let relative = Point (fromIntegral row) (fromIntegral col)
+      return (origin <> relative, f relative)
+      --             Nat -> Int         Nat -> Int
 
-main :: IO ()
-main = printState initial
+data Room = Room Nat Nat Point
+data Orientation = Vertical | Horizontal
+            --               origin length
+data Door = Door Orientation Point  Nat
+room :: Room -> Grid
+room (Room width height origin) = Grid $ Map.fromList $ rectangle (width + 2) (height + 2) origin block
+                                                        where block p = if isWall p then Wall else Floor
+                                                              isWall (Point row col) = row == 0 || row == (fromIntegral width + 1) || col == 0 || col == (fromIntegral height + 1)
+
+door :: Door -> Grid
+door (Door Vertical origin length) = Grid $ Map.fromList $ rectangle 1 length origin (const Floor)
+door (Door Horizontal origin length) = Grid $ Map.fromList $ rectangle length 1 origin (const Floor)
+
+combineFloors :: Grid -> Grid -> Grid
+combineFloors (Grid a) (Grid b) = Grid $ Map.union a b
+
+createFloor :: [Room] -> [Door] -> Grid
+createFloor rooms doors = foldMap door doors <> foldMap room rooms
+
+format :: Maybe [State] -> String
+format (Just list) = "Solution length: " ++ show (List.length list) ++ "\n" ++ mkString show "\n\n" list
+format Nothing = "No path!"
+
+swapFloor :: Grid
+swapFloor = createFloor [Room 10 10 (Point 0 0), Room 10 10 (Point 0 11)] [Door Vertical (Point 4 11) 3]
+
+swapFurniture :: [(Nat, Furniture)]
+swapFurniture = [(1,Furniture (Point 4 8) 3 3), (2, Furniture (Point 4 12) 3 3)]
+
+swapFurnitureGoal :: [(Nat, Furniture)]
+swapFurnitureGoal = [(2,Furniture (Point 4 8) 3 3), (1, Furniture (Point 4 12) 3 3)]
+
+swapInitial :: State
+swapInitial = State swapFloor (Map.fromList swapFurniture) Nothing
+
+swapGoal :: State
+swapGoal = State swapFloor (Map.fromList swapFurnitureGoal) Nothing
+
+
