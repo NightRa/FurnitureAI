@@ -1,3 +1,6 @@
 *.iml
 .idea/
 dist
+.cabal-sandbox/
+cabal.sandbox.config
+cabal_.config
