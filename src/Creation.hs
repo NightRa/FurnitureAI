@@ -99,8 +99,8 @@ markPoint cond block p grid = if cond ((`Map.lookup` grid) >=> preview blockErr)
 markWallBlock :: Point -> GridErr -> GridErr
 markWallBlock = markPoint isValidWall WallBlock
 
-markFurnitureBlock :: Point -> GridErr -> GridErr
-markFurnitureBlock = markPoint isValidFurniture FurnitureBlock
+markFurnitureBlock :: ID -> Point -> GridErr -> GridErr
+markFurnitureBlock id = markPoint isValidFurniture (FurnitureBlock (Just id))
 
 markDoorBlock :: Point -> GridErr -> GridErr
 markDoorBlock = markPoint isValidDoor FloorBlock
@@ -129,8 +129,8 @@ markDoor :: Door -> Grid -> GridErr
 markDoor door grid = alaf Endo foldMap markDoorBlock doorPoints (review gridErr' grid)
                             where doorPoints = fst <$> doorBlocks door
 
-markFurniture :: Furniture -> Grid -> GridErr
-markFurniture furniture grid = alaf Endo foldMap markFurnitureBlock (furniturePoints furniture) (review gridErr' grid)
+markFurniture :: ID -> Furniture -> Grid -> GridErr
+markFurniture id furniture grid = alaf Endo foldMap (markFurnitureBlock id) (furniturePoints furniture) (review gridErr' grid)
 
 --- Creation of objects from 2 points ---
 

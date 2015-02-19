@@ -100,11 +100,9 @@ action  _   = Nothing
 showGridErr :: GridErr -> String
 showGridErr grid = '\n' : showMat showBlock "" mat
                 where mat = gridList grid
-                      showBlock Nothing                            = " "
-                      showBlock (Just InvalidBlock)                = "!"
-                      showBlock (Just (ValidBlock FloorBlock))     = "-"
-                      showBlock (Just (ValidBlock WallBlock))      = "█"
-                      showBlock (Just (ValidBlock FurnitureBlock)) = "X"
+                      showBlock Nothing = " "
+                      showBlock (Just InvalidBlock)  = "!"
+                      showBlock (Just (ValidBlock b)) = show b
 
 printGridErr :: String -> (GridErr,Point) -> IO ()
 printGridErr header (grid,Point row col) = do
@@ -201,14 +199,14 @@ selectRoomDestination = selectDestinationWithOrigin roomFromPoints markRoom "Sel
 selectRoom :: Grid -> Point -> IO (Point, Grid)
 selectRoom = selectObject selectRoomOrigin selectRoomDestination
 
-selectFurnitureOrigin :: Grid -> Point -> IO (Point, Maybe Point)
-selectFurnitureOrigin = selectOrigin markFurnitureBlock isValidFurniture "Select the furniture's origin" move2D
+selectFurnitureOrigin :: ID -> Grid -> Point -> IO (Point, Maybe Point)
+selectFurnitureOrigin id = selectOrigin (markFurnitureBlock id) isValidFurniture "Select the furniture's origin" move2D
 
-selectFurnitureDestination :: Point -> Grid -> Point -> IO (Point, Maybe (Grid,Furniture))
-selectFurnitureDestination = selectDestinationWithOrigin' (fromNormFurniture .: furnitureFromPoints) markFurniture "Select the furniture's second point" move2D
+selectFurnitureDestination :: ID -> Point -> Grid -> Point -> IO (Point, Maybe (Grid,Furniture))
+selectFurnitureDestination id = selectDestinationWithOrigin' (fromNormFurniture .: furnitureFromPoints) (markFurniture id) "Select the furniture's second point" move2D
 
-selectFurniture :: Grid -> Point -> IO (Point,Grid, Maybe Furniture)
-selectFurniture grid start = (flatr . second (maybe (grid,Nothing) (\(grid',f') -> (grid',Just f')))) <$> compose (flip selectFurnitureOrigin) (\p origin -> selectFurnitureDestination origin grid p) start grid
+selectFurniture :: ID -> Grid -> Point -> IO (Point,Grid, Maybe Furniture)
+selectFurniture id grid start = (flatr . second (maybe (grid,Nothing) (\(grid',f') -> (grid',Just f')))) <$> compose (flip (selectFurnitureOrigin id)) (\p origin -> selectFurnitureDestination id origin grid p) start grid
                              where flatr :: (a,(b,c)) -> (a,b,c)
                                    flatr (a,(b,c)) = (a,b,c)
 
@@ -233,14 +231,13 @@ selectDoorStep :: Orientation -> UIState -> IO UIState
 selectDoorStep o = selectStep (selectDoor o)
 
 selectFurnitureStep :: UIState -> IO UIState
-selectFurnitureStep (p, s@(State grid furnitures _ grid'), id) = f <$> selectFurniture grid' p
+selectFurnitureStep (p, s@(State grid furnitures _ grid'), id) = f <$> selectFurniture id grid' p
                                                          where f :: (Point,Grid,Maybe Furniture) -> (Point,State,ID)
                                                                f (p', grid'', Nothing) = (p', s, id)
                                                                f (p', grid'', Just furniture) = (p', State grid (Map.insert id furniture furnitures) Nothing grid'', id + 1)
 
 --- Main ---
 
-type ID = Nat
 type UIState = (Point,State,ID)
 type UIStep = UIState -> IO UIState
 

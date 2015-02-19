@@ -1,7 +1,7 @@
 {-# LANGUAGE ViewPatterns #-}
 module Model where
 
-import Prelude hiding (lookup, floor, abs, length)
+import Prelude hiding (lookup, floor, abs, length, id)
 import Data.Functor
 import Control.Monad
 import Data.Monoid
@@ -25,10 +25,11 @@ import Data.Graph.AStar
 ----------------------------------------------------------------------
 
 type Nat = Natural
+type ID = Nat
 
 data Point = Point {_row :: Int, _col :: Int} deriving (Show, Eq, Ord)
 
-data Block = FloorBlock | WallBlock | FurnitureBlock deriving (Show, Eq, Ord)
+data Block = FloorBlock | WallBlock | FurnitureBlock (Maybe ID) deriving (Eq, Ord)
 data Move = MoveUp | MoveDown | MoveLeft | MoveRight | RotateClockwise | RotateCounterClockwise deriving (Show, Eq, Ord)
 
 --                                 pos   width  height
@@ -39,7 +40,7 @@ data Grid = Grid { ungrid :: Map Point Block } deriving (Eq, Ord)
 
 --                 Floor     Furniture
 --                 Structure      id
-data State = State Grid      (Map Nat Furniture) (Maybe Move) Grid deriving (Eq, Ord)
+data State = State Grid      (Map ID  Furniture) (Maybe Move) Grid deriving (Eq, Ord)
 
 ----------------------------------------------------------------------
 -------------------- Model typeclass instances -----------------------
@@ -67,6 +68,15 @@ showMove :: Maybe Move -> String
 showMove Nothing = ""
 showMove (Just move) = "Move: " ++ show move
 
+instance Show Block where
+    show FloorBlock                           = "-"
+    show WallBlock                            = "█"
+    show (FurnitureBlock (Just id)) | id < 10 = show id
+    show (FurnitureBlock _)                   = "X"
+
+showBlock :: Maybe Block -> String
+showBlock Nothing = " "
+showBlock (Just b) = show b
 
 --- Lenses ---
 
@@ -100,13 +110,13 @@ gridList grid = tabulateList2 width height (\row col -> Map.lookup (Point (fromN
 ----------------------------------------------------------------------
 
 -- Lens possibility
-setPoint :: Point -> (Grid -> Maybe Grid)
-setPoint p (Grid grid) =
+setPoint :: ID -> Point -> (Grid -> Maybe Grid)
+setPoint id p (Grid grid) =
             case Map.lookup p grid of
               Nothing -> Nothing
               Just WallBlock -> Nothing
-              Just FurnitureBlock -> Nothing
-              Just FloorBlock -> Just $ Grid (Map.insert p FurnitureBlock grid)
+              Just (FurnitureBlock _) -> Nothing
+              Just FloorBlock -> Just $ Grid (Map.insert p (FurnitureBlock (Just id)) grid)
 
 -- Moves the origin to the upper left, width and height are non-negative (Nats).
 normalize :: Furniture -> NormFurniture
@@ -125,14 +135,14 @@ furniturePoints (normalize -> (NormFurniture (Point row col) width height)) =
                  join $ tabulateList2 width height (\drow dcol -> Point (row + fromNat drow) (col + fromNat dcol))
 
 
-fillFurniture :: Furniture -> (Grid -> Maybe Grid)
-fillFurniture furniture = applyAll setPoint (furniturePoints furniture)
+fillFurniture :: (ID,Furniture) -> (Grid -> Maybe Grid)
+fillFurniture (id,furniture) = applyAll (setPoint id) (furniturePoints furniture)
 
-constructFloor :: Foldable f => f Furniture -> Grid -> Maybe Grid
+constructFloor :: Foldable f => f (ID,Furniture) -> Grid -> Maybe Grid
 constructFloor = applyAll fillFurniture
 
 stateFloor :: State -> Maybe State
-stateFloor (State floor fs move _) = State floor fs move <$> constructFloor (Map.elems fs) floor
+stateFloor (State floor fs move _) = State floor fs move <$> constructFloor (Map.toList fs) floor
 
 addFurniture :: Furniture -> Nat -> State -> Maybe State
 addFurniture furniture id' (State grid fs move filledGrid) = stateFloor $ State grid (Map.insert id' furniture fs) move filledGrid
@@ -269,7 +279,3 @@ showMat f sep grid = unlines (mkString f sep <$> grid)
 showGrid :: Grid -> String
 showGrid (Grid grid) = '\n' : showMat showBlock "" mat
                     where mat = gridList grid
-                          showBlock Nothing               = " "
-                          showBlock (Just FloorBlock)     = "-"
-                          showBlock (Just WallBlock)      = "█"
-                          showBlock (Just FurnitureBlock) = "X"
