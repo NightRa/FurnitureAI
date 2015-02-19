@@ -109,10 +109,14 @@ printGridErr :: String -> (GridErr,Point) -> IO ()
 printGridErr header (grid,Point row col) = do
                                             clearScreen
                                             setCursorPosition 0 0
-                                            putStrLn "Keymap: wasd - movement, z - cancel, q - quit"
                                             putStrLn header
                                             putStrLn $ showGridErr grid
-                                            setCursorPosition (row + 3) col
+                                            setCursorPosition (row + length (lines header) + 1) col
+
+printStateConstruction :: String -> (GridErr,Point) -> IO ()
+printStateConstruction header = printGridErr $ "Keymap: wasd - movement, z - cancel, q - quit\n" ++ header
+
+
 
 ----------------------------------------------------------------------
 ------------------- Generic selection functions ----------------------
@@ -120,7 +124,7 @@ printGridErr header (grid,Point row col) = do
 
 selectPoint :: String -> (Point -> GridErr) -> (Point -> Maybe s') -> (Direction -> Point -> Point) -> Point -> IO (Point,Maybe s')
 selectPoint header showState confirm move p = do
-                                               printGridErr header (showState p, p)
+                                               printStateConstruction header (showState p, p)
                                                act <- readAction
                                                case act of
                                                  MoveCursor dir -> selectPoint header showState confirm move (move dir p)
@@ -265,10 +269,62 @@ type UIStep = UIState -> IO UIState
 state :: UIState -> State
 state (_, st, _) = st
 
+floorCreation :: UIState -> IO ()
+floorCreation st@(p,State _ _ _ gridErr,_) = do
+                     printGridErr "Keymap: r - room, v - vertical door, h - horizontal door, enter - next stage, q - quit" (review gridErr' gridErr, p)
+                     c <- getHiddenChar
+                     handle c
+                   where handle :: Char -> IO ()
+                         handle 'r' = do
+                                      st' <- selectRoomStep st
+                                      floorCreation st'
+                         handle 'v' = do
+                                      st' <- selectDoorStep Vertical st
+                                      floorCreation st'
+                         handle 'h' = do
+                                      st' <- selectDoorStep Horizontal st
+                                      floorCreation st'
+                         handle '\r' = do
+                                      initST <- initStateSelection st
+                                      goalST <- goalStateSelection initST
+                                      solve (state initST) (state goalST)
+                         handle 'q' = exitSuccess
+                         handle _   = floorCreation st
+
+initStateSelection :: UIState -> IO UIState
+initStateSelection st@(p,State _ _ _ gridErr,_) = do
+                   printGridErr "Keymap: f - create furniture, enter - next stage, q - quit" (review gridErr' gridErr, p)
+                   c <- getHiddenChar
+                   handle c
+                   where handle :: Char -> IO UIState
+                         handle 'f' = do
+                                        st' <- selectFurnitureStep st
+                                        initStateSelection st'
+                         handle '\r' = return st
+                         handle 'q' = exitSuccess
+                         handle _   = initStateSelection st
+
+goalStateSelection :: UIState -> IO UIState
+goalStateSelection st@(p,State _ _ _ gridErr,_) = do
+                   printGridErr "Keymap: number - create furniture, enter - next stage, q - quit" (review gridErr' gridErr, p)
+                   c <- getHiddenChar
+                   handle c
+                   where handle :: Char -> IO UIState
+                         handle c | isDigit c = do
+                                                st' <- moveFurniture (toNat $ digitToInt c) st
+                                                goalStateSelection st'
+                         handle '\r' = return st
+                         handle 'q' = exitSuccess
+                         handle _   = goalStateSelection st
+
+
 main :: IO ()
 main = do
          setTitle "Furniture AI"
          let s0 :: UIState
+             s0 = (Point 0 0, State (Grid Map.empty) Map.empty Nothing (Grid Map.empty), 0)
+         floorCreation s0
+         {-let s0 :: UIState
              s0 = (Point 0 0, State (Grid Map.empty) Map.empty Nothing (Grid Map.empty), 0)
 
          s1 <- selectRoomStep s0
@@ -281,5 +337,5 @@ main = do
          putStrLn "\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n"
          print s7
          solve (state s5) (state s7)
-         return ()
+         return ()-}
 

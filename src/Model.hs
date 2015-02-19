@@ -97,6 +97,7 @@ tabulateList2 width height f = (\row -> (\col -> f row col) <$> [0..(width - 1)]
 -- For all points in [0..max row,0..max col], if defined -> Just, otherwise -> None.
 -- Takes the largest rectangle that covers the whole floor.
 gridList :: Map Point a -> [[Maybe a]]
+gridList grid | Map.null grid = []
 gridList grid = tabulateList2 width height (\row col -> Map.lookup (Point (fromNat row) (fromNat col)) grid)
                       where width, height :: Nat
                             width  = toNat $ maxCol + 1  -- (+ 1) because the indexes start from 0.
@@ -275,6 +276,7 @@ mkString :: (a -> String) -> String -> [a] -> String
 mkString f sep list = List.intercalate sep (f <$> list)
 
 showMat :: (a -> String) -> String -> [[a]] -> String
+showMat _ _   []   = ""
 showMat f sep grid = unlines (mkString f sep <$> grid)
 
 showGrid :: Grid -> String
