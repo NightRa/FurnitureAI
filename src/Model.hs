@@ -62,7 +62,8 @@ instance Show Grid where
   show = showGrid
 
 instance Show State where
-  show (State _ furniture move filledGrid) = showMove move ++ "\n" ++ show filledGrid
+  show (stateFloor -> Nothing) = "Invalid state"
+  show (stateFloor -> Just (State _ furniture move filledGrid)) = showMove move ++ "\n" ++ show filledGrid
 
 showMove :: Maybe Move -> String
 showMove Nothing = ""

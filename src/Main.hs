@@ -21,8 +21,7 @@ import System.IO
 import System.Console.ANSI
 import System.Exit
 import Foreign.C.Types
-
-import Debug.Trace
+import System.IO.Unsafe
 
 ----------------------------------------------------------------------
 ------------------------------- FFI ----------------------------------
@@ -41,15 +40,13 @@ getHiddenChar = fmap (chr.fromEnum) c_getch
 data Action = MoveCursor Direction | Confirm | Cancel
 data Direction = UpDir | DownDir | LeftDir | RightDir
 
-main' :: IO ()
-main' = do
-        setTitle "Furniture AI"
-        hideCursor
+solve :: State -> State -> IO ()
+solve initial goal = do
         showState' 0 states
         frame <- newIORef (0 :: Nat)
         loop frame size
        where
-        result = fromJust $ bestPath swapGoal swapInitial
+        result = fromJust $ bestPath goal initial
         size = fromIntegral $ length result
         states :: Array Nat State
         states = listArray (0,size - 1) result
@@ -66,6 +63,7 @@ showState' :: Nat -> Array Nat State -> IO ()
 showState' frame arr = do
                        clearScreen
                        setCursorPosition 0 0
+                       putStrLn "Keymap: a - back, d - forward, q - quit"
                        putStrLn $ "Result frame " ++ show frame
                        print $ arr ! frame
 
@@ -78,8 +76,8 @@ next size n | n == size - 1 = n
 next _    n                 = n + 1
 
 handleAction :: Nat -> IORef Nat -> Char -> IO ()
-handleAction _    ref 'l' = modifyIORef' ref back
-handleAction size ref 'r' = modifyIORef' ref (next size)
+handleAction _    ref 'a' = modifyIORef' ref back
+handleAction size ref 'd' = modifyIORef' ref (next size)
 handleAction _    _   'q' = exitSuccess
 handleAction _    _   _   = return ()
 
@@ -97,6 +95,7 @@ action 'd'  = Just $ MoveCursor RightDir
 action '\r' = Just Confirm
 action '\n' = Just Confirm
 action 'z'  = Just Cancel
+action 'q'  = unsafePerformIO exitSuccess
 action  _   = Nothing
 
 showGridErr :: GridErr -> String
@@ -110,9 +109,10 @@ printGridErr :: String -> (GridErr,Point) -> IO ()
 printGridErr header (grid,Point row col) = do
                                             clearScreen
                                             setCursorPosition 0 0
+                                            putStrLn "Keymap: wasd - movement, z - cancel, q - quit"
                                             putStrLn header
                                             putStrLn $ showGridErr grid
-                                            setCursorPosition (row + 2) col
+                                            setCursorPosition (row + 3) col
 
 ----------------------------------------------------------------------
 ------------------- Generic selection functions ----------------------
@@ -262,8 +262,12 @@ moveFurniture id uis@(_, s@(State grid furnitures _ grid'), currentId) =
 type UIState = (Point,State,ID)
 type UIStep = UIState -> IO UIState
 
+state :: UIState -> State
+state (_, st, _) = st
+
 main :: IO ()
 main = do
+         setTitle "Furniture AI"
          let s0 :: UIState
              s0 = (Point 0 0, State (Grid Map.empty) Map.empty Nothing (Grid Map.empty), 0)
 
@@ -273,7 +277,9 @@ main = do
          s4 <- selectFurnitureStep s3
          s5 <- selectFurnitureStep s4
          s6 <- moveFurniture 0 s5
+         s7 <- moveFurniture 1 s6
          putStrLn "\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n"
-         print s6
+         print s7
+         solve (state s5) (state s7)
          return ()
 
