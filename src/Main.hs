@@ -22,6 +22,8 @@ import System.Console.ANSI
 import System.Exit
 import Foreign.C.Types
 
+import Debug.Trace
+
 ----------------------------------------------------------------------
 ------------------------------- FFI ----------------------------------
 ----------------------------------------------------------------------
@@ -236,6 +238,25 @@ selectFurnitureStep (p, s@(State grid furnitures _ grid'), id) = f <$> selectFur
                                                                f (p', grid'', Nothing) = (p', s, id)
                                                                f (p', grid'', Just furniture) = (p', State grid (Map.insert id furniture furnitures) Nothing grid'', id + 1)
 
+moveFurniture :: ID -> UIState -> IO UIState
+moveFurniture id uis@(_, s@(State grid furnitures _ grid'), currentId) =
+    case Map.lookup id furnitures of
+    Nothing -> return uis
+    Just (Furniture oldOrigin width height) ->
+        package <$> selectDestination (\origin grid'' -> moveFurniture origin grid'') "Select the destination furniture position" move2D gridWOFurniture oldOrigin
+            where moveFurniture :: Point -> Grid -> (GridErr,Furniture)
+                  moveFurniture origin grid'' = (markFurniture id moved grid'', moved)
+                    where moved :: Furniture
+                          moved = Furniture origin width height
+                  gridWOFurniture :: Grid
+                  gridWOFurniture = filledGridOf $ fromJust $ stateFloor (State grid (Map.delete id furnitures) Nothing (Grid Map.empty))
+                  filledGridOf :: State -> Grid
+                  filledGridOf (State _ _ _ filledGrid) = filledGrid
+                  package :: (Point, Maybe (Grid,Furniture)) -> UIState
+                  package (p', Nothing) =  (p', s, currentId)
+                  package (p', Just (grid'', furniture)) = (p', State grid (Map.insert id furniture furnitures) Nothing grid'', currentId)
+
+
 --- Main ---
 
 type UIState = (Point,State,ID)
@@ -251,7 +272,8 @@ main = do
          s3 <- selectDoorStep Vertical s2
          s4 <- selectFurnitureStep s3
          s5 <- selectFurnitureStep s4
+         s6 <- moveFurniture 0 s5
          putStrLn "\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n"
-         print s5
+         print s6
          return ()
 
