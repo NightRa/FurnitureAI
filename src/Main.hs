@@ -324,18 +324,3 @@ main = do
          let s0 :: UIState
              s0 = (Point 0 0, State (Grid Map.empty) Map.empty Nothing (Grid Map.empty), 0)
          floorCreation s0
-         {-let s0 :: UIState
-             s0 = (Point 0 0, State (Grid Map.empty) Map.empty Nothing (Grid Map.empty), 0)
-
-         s1 <- selectRoomStep s0
-         s2 <- selectRoomStep s1
-         s3 <- selectDoorStep Vertical s2
-         s4 <- selectFurnitureStep s3
-         s5 <- selectFurnitureStep s4
-         s6 <- moveFurniture 0 s5
-         s7 <- moveFurniture 1 s6
-         putStrLn "\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n"
-         print s7
-         solve (state s5) (state s7)
-         return ()-}
-
